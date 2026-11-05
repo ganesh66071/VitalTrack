@@ -1,0 +1,539 @@
+<!DOCTYPE html>
+<!--
+  VitalTrack - live dashboard
+  Author: Senator Chigoziri Ugwu
+-->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Health Monitoring Dashboard</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+* { box-sizing: border-box; }
+body { margin:0; font-family:"Segoe UI",Arial,sans-serif; background:#f1f4f9; color:#333; }
+
+/* TOP BAR */
+.top-bar {
+  background:#0b5ed7; color:white;
+  padding:15px 20px;
+  display:flex; justify-content:space-between; align-items:center;
+}
+.top-bar h1 { margin:0; font-size:22px; }
+.top-bar-right { display:flex; align-items:center; gap:12px; }
+select { padding:6px 10px; border-radius:5px; border:none; outline:none; font-size:14px; }
+.conn-badge {
+  padding:4px 14px; border-radius:20px; font-size:12px;
+  font-weight:700; letter-spacing:0.06em; text-transform:uppercase;
+  background:rgba(220,53,69,0.25); color:#ff6b7a; border:1px solid #dc3545;
+}
+.conn-badge.live { background:rgba(0,220,100,0.25); color:#00dc64; border-color:#00dc64; }
+.timestamp { font-size:12px; opacity:0.8; }
+
+/* NOTIFICATION BANNER */
+.notification {
+  background:#dc3545; color:white; text-align:center;
+  padding:12px; font-weight:bold; font-size:15px;
+}
+.notification.hidden { display:none; }
+
+/* ALERT BAR */
+#alert-bar { padding:0 20px; margin-top:14px; display:flex; flex-direction:column; gap:8px; }
+.alert-item {
+  display:flex; align-items:center; gap:12px;
+  padding:10px 16px; border-radius:8px; font-size:13px; font-weight:500;
+}
+.alert-item.danger  { background:#ffebee; border-left:5px solid #dc3545; color:#dc3545; }
+.alert-item.warning { background:#fff3e0; border-left:5px solid #e65100; color:#e65100; }
+.alert-time { margin-left:auto; font-size:11px; opacity:0.7; white-space:nowrap; }
+
+/* DASHBOARD GRID */
+.dashboard {
+  padding:20px;
+  display:grid;
+  grid-template-columns:repeat(auto-fit, minmax(220px,1fr));
+  gap:20px;
+}
+.card {
+  background:white; border-radius:12px; padding:20px;
+  text-align:center; box-shadow:0 6px 15px rgba(0,0,0,0.08);
+  transition:box-shadow 0.2s;
+}
+.card:hover { box-shadow:0 8px 24px rgba(0,0,0,0.13); }
+.card h3 { margin:0 0 10px 0; font-weight:600; color:#444; font-size:15px; }
+.value {
+  font-size:38px; font-weight:bold; color:#0b5ed7;
+  transition:color 0.3s; font-variant-numeric:tabular-nums;
+}
+.value.danger  { color:#dc3545; }
+.value.warning { color:#e65100; }
+.value.normal  { color:#0b5ed7; }
+.card-sub { font-size:12px; color:#888; margin-top:6px; }
+.card-status {
+  display:inline-block; margin-top:10px; padding:3px 12px;
+  border-radius:20px; font-size:11px; font-weight:700;
+  letter-spacing:0.06em; text-transform:uppercase;
+}
+.status-ok      { background:#e8f5e9; color:#1b5e20; }
+.status-danger  { background:#ffebee; color:#dc3545; }
+.status-warning { background:#fff3e0; color:#e65100; }
+.status-unknown { background:#e3eeff; color:#5a6a9a; }
+
+/* Alert card */
+.alert-card { border-left:6px solid #dc3545; }
+.alert-card .alert-value {
+  font-size:15px; color:#dc3545; font-weight:600;
+  min-height:40px; display:flex; align-items:center; justify-content:center;
+  text-align:center; line-height:1.4;
+}
+
+/* Heartbeat bars */
+.hb-wrap { display:flex; gap:2px; align-items:flex-end; height:28px; justify-content:center; margin-top:8px; }
+.hb-bar  { width:5px; border-radius:2px; background:#dc3545; min-height:3px; transition:height 0.12s ease; }
+
+/* SpO2 ring */
+.spo2-wrap { display:flex; align-items:center; justify-content:center; gap:12px; margin-top:6px; }
+.spo2-ring { position:relative; width:56px; height:56px; }
+.spo2-ring svg { transform:rotate(-90deg); }
+.spo2-label { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); font-size:11px; font-weight:700; color:#0b5ed7; }
+
+/* Movement bars */
+.move-bars { display:flex; gap:3px; align-items:flex-end; height:26px; justify-content:center; margin-top:8px; }
+.move-bar  { width:6px; border-radius:2px; background:#0b5ed7; transition:height 0.25s ease; }
+.no-movement .move-bar { background:#cdd5e0; height:4px !important; }
+
+/* CHARTS */
+.charts-section { padding:0 20px 20px; }
+.charts-section h2 { color:#0b5ed7; font-size:17px; margin-bottom:14px; border-left:4px solid #0b5ed7; padding-left:10px; }
+.charts-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:16px; }
+.chart-card { background:white; border-radius:12px; padding:16px 18px; box-shadow:0 6px 15px rgba(0,0,0,0.08); }
+.chart-title { font-size:12px; font-weight:700; color:#888; text-transform:uppercase; letter-spacing:0.08em; margin-bottom:12px; }
+.chart-wrap { height:140px; position:relative; }
+
+/* LOGS */
+.logs { padding:0 20px 20px; }
+.logs h2 { color:#0b5ed7; font-size:17px; margin-bottom:10px; border-left:4px solid #0b5ed7; padding-left:10px; }
+table { width:100%; border-collapse:collapse; background:white; border-radius:10px; overflow:hidden; box-shadow:0 6px 15px rgba(0,0,0,0.08); }
+th, td { padding:12px; text-align:center; border-bottom:1px solid #e1e1e1; font-size:13px; }
+th { background:#0b5ed7; color:white; font-weight:600; }
+tr:hover td { background:#f1f4f9; }
+td.alert-row { color:#dc3545; font-weight:600; }
+
+/* FOOTER */
+footer { text-align:center; padding:15px; background:white; font-size:13px; color:#777; border-top:1px solid #e1e1e1; margin-top:10px; }
+</style>
+</head>
+<body>
+
+<!-- Top bar -->
+<div class="top-bar">
+  <h1 id="title">Health Monitoring Dashboard</h1>
+  <div class="top-bar-right">
+    <span class="timestamp" id="last-updated">—</span>
+    <select id="languageSwitcher">
+      <option value="en">English</option>
+      <option value="fr">Français</option>
+      <option value="es">Español</option>
+    </select>
+    <span class="conn-badge" id="conn-badge">Offline</span>
+  </div>
+</div>
+
+<!-- Notification banner -->
+<div class="notification hidden" id="notification"></div>
+
+<!-- Alert bar -->
+<div id="alert-bar"></div>
+
+<!-- Sensor cards -->
+<div class="dashboard">
+
+  <div class="card" id="card-hr">
+    <h3 id="hrLabel">Heart Rate</h3>
+    <div class="value normal" id="val-hr">—<span style="font-size:16px;font-weight:400"> BPM</span></div>
+    <div class="hb-wrap" id="hb-bar">
+      <div class="hb-bar"></div><div class="hb-bar"></div><div class="hb-bar"></div>
+      <div class="hb-bar"></div><div class="hb-bar"></div><div class="hb-bar"></div>
+      <div class="hb-bar"></div><div class="hb-bar"></div><div class="hb-bar"></div>
+      <div class="hb-bar"></div><div class="hb-bar"></div><div class="hb-bar"></div>
+      <div class="hb-bar"></div><div class="hb-bar"></div><div class="hb-bar"></div>
+    </div>
+    <div class="card-status status-unknown" id="status-hr">No Data</div>
+  </div>
+
+  <div class="card" id="card-temp">
+    <h3 id="tempLabel">Temperature</h3>
+    <div class="value normal" id="val-temp">—<span style="font-size:16px;font-weight:400"> °C</span></div>
+    <div class="card-sub" id="sub-temp">DS18B20 sensor</div>
+    <div class="card-status status-unknown" id="status-temp">No Data</div>
+  </div>
+
+  <div class="card" id="card-spo2">
+    <h3 id="spo2Label">Blood Oxygen (SpO2)</h3>
+    <div class="value normal" id="val-spo2">—<span style="font-size:16px;font-weight:400"> %</span></div>
+    <div class="spo2-wrap">
+      <div class="spo2-ring">
+        <svg width="56" height="56" viewBox="0 0 56 56">
+          <circle cx="28" cy="28" r="22" fill="none" stroke="#e3eeff" stroke-width="5"/>
+          <circle cx="28" cy="28" r="22" fill="none" stroke="#0b5ed7" stroke-width="5"
+            stroke-dasharray="138.2" stroke-dashoffset="138.2" id="spo2-arc"
+            stroke-linecap="round" style="transition:stroke-dashoffset 0.6s ease"/>
+        </svg>
+        <div class="spo2-label" id="spo2-pct">—%</div>
+      </div>
+      <div class="card-status status-unknown" id="status-spo2">No Data</div>
+    </div>
+  </div>
+
+  <div class="card" id="card-weight">
+    <h3 id="weightLabel">Body Weight</h3>
+    <div class="value normal" id="val-weight">—<span style="font-size:16px;font-weight:400"> kg</span></div>
+    <div class="card-sub">HX711 load cells</div>
+    <div class="card-status status-ok" id="status-weight">Stable</div>
+  </div>
+
+  <div class="card" id="card-move">
+    <h3 id="moveLabel">Bed Movement</h3>
+    <div class="value normal" id="val-move" style="font-size:22px">Monitoring…</div>
+    <div class="move-bars no-movement" id="move-bars">
+      <div class="move-bar"></div><div class="move-bar"></div><div class="move-bar"></div>
+      <div class="move-bar"></div><div class="move-bar"></div><div class="move-bar"></div>
+      <div class="move-bar"></div>
+    </div>
+    <div class="card-status status-unknown" id="status-move">No Data</div>
+  </div>
+
+  <div class="card alert-card">
+    <h3 id="alertLabel">System Alert</h3>
+    <div class="alert-value" id="alertText">No alerts</div>
+  </div>
+
+</div>
+
+<!-- Charts -->
+<div class="charts-section">
+  <h2>Vital Signs History</h2>
+  <div class="charts-grid">
+    <div class="chart-card">
+      <div class="chart-title">Heart Rate (BPM)</div>
+      <div class="chart-wrap"><canvas id="chart-hr"></canvas></div>
+    </div>
+    <div class="chart-card">
+      <div class="chart-title">Temperature (°C)</div>
+      <div class="chart-wrap"><canvas id="chart-temp"></canvas></div>
+    </div>
+    <div class="chart-card">
+      <div class="chart-title">SpO2 (%)</div>
+      <div class="chart-wrap"><canvas id="chart-spo2"></canvas></div>
+    </div>
+    <div class="chart-card">
+      <div class="chart-title">Weight (kg)</div>
+      <div class="chart-wrap"><canvas id="chart-weight"></canvas></div>
+    </div>
+  </div>
+</div>
+
+<!-- Patient Data Logs -->
+<div class="logs">
+  <h2 id="logTitle">Patient Data Logs</h2>
+  <table>
+    <thead>
+      <tr>
+        <th id="timeHead">Time</th>
+        <th>Heart Rate</th>
+        <th>Temperature</th>
+        <th>SpO2</th>
+        <th>Movement</th>
+        <th>Alert</th>
+      </tr>
+    </thead>
+    <tbody id="logTable"></tbody>
+  </table>
+</div>
+
+<footer>
+  VitalTrack &nbsp;·&nbsp; ESP32-S3 + Raspberry Pi 4 &nbsp;·&nbsp;
+  IRUCHI SAM-KALAGBOR · SENATOR CHIGOZIRI UGWU &nbsp;·&nbsp; Supervisor: Dr. Ali Nyamgwarimam Obadiah
+</footer>
+
+<script>
+const translations = {
+  en: {
+    title:"Health Monitoring Dashboard", hr:"Heart Rate", temp:"Temperature",
+    spo2:"Blood Oxygen (SpO2)", weight:"Body Weight", move:"Bed Movement",
+    alert:"System Alert", logs:"Patient Data Logs", time:"Time",
+    active:"Active", inactive:"Inactive", noAlert:"No alerts",
+    hrHigh:"High heart rate detected!", hrLow:"Low heart rate detected!",
+    tempHigh:"High temperature detected!", tempLow:"Low temperature detected!",
+    spo2Low:"Low blood oxygen detected!", inactivity:"Patient inactivity detected!",
+    stable:"Stable", normal:"Normal", noData:"No Data"
+  },
+  fr: {
+    title:"Tableau de Surveillance de Santé", hr:"Fréquence Cardiaque", temp:"Température",
+    spo2:"Oxygène Sanguin (SpO2)", weight:"Poids Corporel", move:"Mouvement du Lit",
+    alert:"Alerte du Système", logs:"Historique des Données", time:"Heure",
+    active:"Actif", inactive:"Inactif", noAlert:"Aucune alerte",
+    hrHigh:"Fréquence cardiaque élevée!", hrLow:"Fréquence cardiaque basse!",
+    tempHigh:"Température élevée détectée!", tempLow:"Température basse détectée!",
+    spo2Low:"Oxygène sanguin bas détecté!", inactivity:"Inactivité du patient détectée!",
+    stable:"Stable", normal:"Normal", noData:"Pas de données"
+  },
+  es: {
+    title:"Panel de Monitoreo de Salud", hr:"Frecuencia Cardíaca", temp:"Temperatura",
+    spo2:"Oxígeno en Sangre (SpO2)", weight:"Peso Corporal", move:"Movimiento de Cama",
+    alert:"Alerta del Sistema", logs:"Registros del Paciente", time:"Hora",
+    active:"Activo", inactive:"Inactivo", noAlert:"Sin alertas",
+    hrHigh:"¡Frecuencia cardíaca alta!", hrLow:"¡Frecuencia cardíaca baja!",
+    tempHigh:"¡Temperatura alta detectada!", tempLow:"¡Temperatura baja detectada!",
+    spo2Low:"¡Oxígeno bajo detectado!", inactivity:"¡Inactividad del paciente!",
+    stable:"Estable", normal:"Normal", noData:"Sin datos"
+  }
+};
+
+let currentLang = "en";
+let prevHr=null, prevTemp=null, prevWeight=null, prevSpo2=null;
+
+function t(k) { return translations[currentLang][k] || k; }
+
+function setLanguage(lang) {
+  currentLang = lang;
+  document.getElementById("title").innerText      = t("title");
+  document.getElementById("hrLabel").innerText    = t("hr");
+  document.getElementById("tempLabel").innerText  = t("temp");
+  document.getElementById("spo2Label").innerText  = t("spo2");
+  document.getElementById("weightLabel").innerText= t("weight");
+  document.getElementById("moveLabel").innerText  = t("move");
+  document.getElementById("alertLabel").innerText = t("alert");
+  document.getElementById("logTitle").innerText   = t("logs");
+  document.getElementById("timeHead").innerText   = t("time");
+}
+document.getElementById("languageSwitcher").addEventListener("change", e => setLanguage(e.target.value));
+
+function showNotification(msg) {
+  const n = document.getElementById("notification");
+  n.innerText = msg; n.classList.remove("hidden");
+  setTimeout(() => n.classList.add("hidden"), 4000);
+}
+
+function animateValue(el, from, to, suffix, decimals) {
+  if (from === null) from = to;
+  const dur=300, start=performance.now();
+  function step(now) {
+    const p = Math.min((now-start)/dur,1);
+    const ease = 1-Math.pow(1-p,3);
+    const val = from+(to-from)*ease;
+    el.innerHTML = val.toFixed(decimals)+'<span style="font-size:16px;font-weight:400"> '+suffix+'</span>';
+    if(p<1) requestAnimationFrame(step);
+  }
+  requestAnimationFrame(step);
+}
+
+function updateSpo2Arc(pct) {
+  const arc = document.getElementById("spo2-arc");
+  arc.style.strokeDashoffset = 138.2-(pct/100)*138.2;
+  arc.style.stroke = pct<90?"#dc3545":pct<95?"#e65100":"#0b5ed7";
+  document.getElementById("spo2-pct").textContent = pct+"%";
+}
+
+function animateHeartbar(bpm) {
+  document.querySelectorAll(".hb-bar").forEach((b,i) => {
+    const v = 6+Math.abs(Math.sin(i*0.7))*18+Math.random()*5;
+    b.style.height = v+"px";
+    setTimeout(()=>{ b.style.height="3px"; }, 60000/bpm*0.4);
+  });
+}
+
+function makeChart(id, color, minY, maxY) {
+  return new Chart(document.getElementById(id).getContext("2d"), {
+    type:"line",
+    data:{ labels:[], datasets:[{ data:[], borderColor:color, borderWidth:2, pointRadius:0, fill:true, backgroundColor:color+"18", tension:0.4 }] },
+    options:{
+      responsive:true, maintainAspectRatio:false, animation:{duration:200},
+      plugins:{ legend:{display:false}, tooltip:{backgroundColor:"#0b5ed7",titleColor:"#fff",bodyColor:"#fff"} },
+      scales:{
+        x:{display:false},
+        y:{grid:{color:"#e8eef8"}, ticks:{color:"#888",font:{size:10},maxTicksLimit:5}, suggestedMin:minY, suggestedMax:maxY}
+      }
+    }
+  });
+}
+
+const charts = {
+  hr:     makeChart("chart-hr",     "#dc3545", 40, 140),
+  temp:   makeChart("chart-temp",   "#0b5ed7", 34, 40),
+  spo2:   makeChart("chart-spo2",   "#0288d1", 85, 100),
+  weight: makeChart("chart-weight", "#1a2e6f",  0, 120),
+};
+
+function updateChart(chart, arr) {
+  if(!chart||!arr) return;
+  chart.data.labels = arr.map((_,i)=>i);
+  chart.data.datasets[0].data = arr.map(d=>d.v);
+  chart.update("none");
+}
+
+function setStatus(id, level, text) {
+  const el = document.getElementById(id);
+  el.className = "card-status status-"+level;
+  el.textContent = text;
+}
+
+function logData(hr, temp, spo2, movement, alertMsg) {
+  const tbody = document.getElementById("logTable");
+  const row = tbody.insertRow(0);
+  row.insertCell(0).innerText = new Date().toLocaleTimeString();
+  row.insertCell(1).innerText = hr   !== null ? hr+"  BPM" : "—";
+  row.insertCell(2).innerText = temp !== null ? temp+" °C" : "—";
+  row.insertCell(3).innerText = spo2 !== null ? spo2+"%" : "—";
+  row.insertCell(4).innerText = movement;
+  const ac = row.insertCell(5);
+  ac.innerText = alertMsg;
+  if(alertMsg !== t("noAlert")) ac.className = "alert-row";
+  while(tbody.rows.length > 50) tbody.deleteRow(tbody.rows.length-1);
+}
+
+const socket = io(window.location.origin, { transports:["websocket"] });
+socket.on("connect", () => {
+  const b = document.getElementById("conn-badge");
+  b.textContent="Live"; b.className="conn-badge live";
+});
+socket.on("disconnect", () => {
+  const b = document.getElementById("conn-badge");
+  b.textContent="Offline"; b.className="conn-badge";
+});
+
+socket.on("sensor_update", ({ state, history }) => {
+  const ts = state.last_updated ? new Date(state.last_updated).toLocaleTimeString() : "—";
+  document.getElementById("last-updated").textContent = "Updated "+ts;
+
+  let alertMsg = t("noAlert");
+  let movementText = "—";
+
+  // Heart rate
+  const hr = state.heartrate;
+  if(hr !== null && hr !== undefined) {
+    animateValue(document.getElementById("val-hr"), prevHr, hr, "BPM", 0);
+    animateHeartbar(hr); prevHr = hr;
+    if(hr > 120) {
+      document.getElementById("val-hr").className="value danger";
+      setStatus("status-hr","danger","High — Tachycardia");
+      alertMsg = t("hrHigh");
+    } else if(hr < 50) {
+      document.getElementById("val-hr").className="value warning";
+      setStatus("status-hr","warning","Low — Bradycardia");
+      alertMsg = t("hrLow");
+    } else {
+      document.getElementById("val-hr").className="value normal";
+      setStatus("status-hr","ok",t("normal"));
+    }
+  }
+
+  // Temperature
+  const temp = state.temperature;
+  if(temp !== null && temp !== undefined) {
+    animateValue(document.getElementById("val-temp"), prevTemp, temp, "°C", 1);
+    prevTemp = temp;
+    if(temp > 38.5) {
+      document.getElementById("val-temp").className="value danger";
+      setStatus("status-temp","danger","High Fever");
+      alertMsg = t("tempHigh");
+    } else if(temp < 35.0) {
+      document.getElementById("val-temp").className="value warning";
+      setStatus("status-temp","warning","Low Temp");
+      alertMsg = t("tempLow");
+    } else {
+      document.getElementById("val-temp").className="value normal";
+      setStatus("status-temp","ok",t("normal"));
+    }
+  }
+
+  // SpO2
+  const spo2 = state.spo2;
+  if(spo2 !== null && spo2 !== undefined) {
+    animateValue(document.getElementById("val-spo2"), prevSpo2, spo2, "%", 0);
+    updateSpo2Arc(spo2); prevSpo2 = spo2;
+    if(spo2 < 90) {
+      document.getElementById("val-spo2").className="value danger";
+      setStatus("status-spo2","danger","Critical Low!");
+      alertMsg = t("spo2Low");
+    } else if(spo2 < 95) {
+      document.getElementById("val-spo2").className="value warning";
+      setStatus("status-spo2","warning","Low");
+      alertMsg = t("spo2Low");
+    } else {
+      document.getElementById("val-spo2").className="value normal";
+      setStatus("status-spo2","ok",t("normal"));
+    }
+  }
+
+  // Weight
+  const wt = state.weight;
+  if(wt !== null && wt !== undefined) {
+    animateValue(document.getElementById("val-weight"), prevWeight, wt, "kg", 1);
+    prevWeight = wt;
+    setStatus("status-weight","ok",t("stable"));
+  }
+
+  // Movement
+  const moving = state.movement;
+  if(moving !== null && moving !== undefined) {
+    const bars   = document.getElementById("move-bars");
+    const movVal = document.getElementById("val-move");
+    if(moving) {
+      movementText = t("active");
+      movVal.textContent = t("active");
+      movVal.className = "value normal";
+      bars.classList.remove("no-movement");
+      bars.querySelectorAll(".move-bar").forEach(b => {
+        b.style.height = (8+Math.random()*18)+"px";
+        setTimeout(()=>{ b.style.height="4px"; }, 500);
+      });
+      setStatus("status-move","ok",t("active"));
+    } else {
+      movementText = t("inactive");
+      movVal.textContent = t("inactive");
+      movVal.className = "value";
+      bars.classList.add("no-movement");
+      const inact = state.alerts && state.alerts.find(a=>a.id==="inactivity");
+      if(inact) {
+        setStatus("status-move","warning",t("inactivity"));
+        alertMsg = t("inactivity");
+      } else {
+        setStatus("status-move","ok","In Bed");
+      }
+    }
+  }
+
+  // Alert bar (top)
+  const bar = document.getElementById("alert-bar");
+  if(!state.alerts || state.alerts.length === 0) {
+    bar.innerHTML = "";
+  } else {
+    bar.innerHTML = state.alerts.map(a=>`
+      <div class="alert-item ${a.level}">
+        <span>${a.level==="danger"?"🚨":"⚠️"}</span>
+        <strong>${a.message}</strong>
+        <span class="alert-time">${new Date(a.time).toLocaleTimeString()}</span>
+      </div>
+    `).join("");
+  }
+
+  // Alert card
+  document.getElementById("alertText").textContent = alertMsg;
+  if(alertMsg !== t("noAlert")) showNotification(alertMsg);
+
+  // Log table
+  logData(hr, temp, spo2, movementText, alertMsg);
+
+  // Charts
+  updateChart(charts.hr,     history.heartrate);
+  updateChart(charts.temp,   history.temperature);
+  updateChart(charts.spo2,   history.spo2 || []);
+  updateChart(charts.weight, history.weight);
+});
+
+setLanguage("en");
+</script>
+</body>
+</html>

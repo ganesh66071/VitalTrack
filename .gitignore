@@ -1,0 +1,9 @@
+# Real credentials — never commit
+firmware/healthcode/secrets.h
+
+__pycache__/
+*.pyc
+.venv/
+venv/
+build/
+*.log
